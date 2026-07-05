@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>3D Rubik's Cube Solve Viewer</title>
+<style>
+  html, body { margin:0; height:100%; background:#1b1d23; overflow:hidden; font-family: -apple-system, sans-serif; }
+  #canvas-wrap { position:absolute; inset:0; }
+  #ui {
+    position:absolute; left:50%; bottom:24px; transform:translateX(-50%);
+    display:flex; gap:10px; align-items:center; background:rgba(0,0,0,0.45);
+    padding:12px 18px; border-radius:14px; backdrop-filter: blur(6px);
+  }
+  button {
+    background:#3a3f4b; color:#fff; border:none; padding:8px 16px; border-radius:8px;
+    font-size:14px; cursor:pointer;
+  }
+  button:hover { background:#4c5262; }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  #status { color:#eee; font-size:14px; min-width:220px; text-align:center; }
+  #hint { position:absolute; top:16px; left:50%; transform:translateX(-50%); color:#aaa; font-size:13px; }
+</style>
+</head>
+<body>
+<div id="canvas-wrap"></div>
+<div id="hint">마우스로 드래그해서 큐브를 돌려볼 수 있어요 (스크롤로 확대/축소)</div>
+<div id="ui">
+  <button id="scrambleBtn">🔀 다시 섞기</button>
+  <button id="prevBtn">◀ 이전</button>
+  <button id="playBtn">▶ 재생</button>
+  <button id="nextBtn">다음 ▶</button>
+  <button id="resetBtn">처음으로</button>
+  <span id="status">Scrambled</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// ---------------------------------------------------------------
+// 데이터: 파이썬(cube.py)에서 계산한 스크램블 상태 + 솔브 과정의
+// 모든 중간 상태를 그대로 박아넣음. (여기서 다시 무브를 계산하지 않음 -
+// 색은 항상 파이썬이 검증한 상태 그대로 스냅되므로 항상 정답)
+// ---------------------------------------------------------------
+let CUBE_DATA = {"scramble_log": ["L2", "R", "U", "U2", "U", "D2", "F2", "U'"], "moves": ["U'", "R2", "L2", "D2", "B2", "U2", "R"], "states": [[[[3, 5, 0], [1, 0, 5], [1, 0, 5]], [[4, 4, 4], [5, 1, 3], [5, 1, 3]], [[1, 3, 0], [4, 2, 2], [4, 4, 4]], [[2, 2, 2], [0, 3, 1], [3, 1, 5]], [[0, 3, 1], [4, 4, 2], [2, 2, 2]], [[3, 3, 1], [5, 5, 0], [0, 0, 5]]], [[[3, 5, 0], [1, 0, 5], [1, 0, 5]], [[0, 3, 1], [5, 1, 3], [5, 1, 3]], [[4, 4, 4], [4, 2, 2], [4, 4, 4]], [[1, 3, 0], [0, 3, 1], [3, 1, 5]], [[2, 2, 2], [4, 4, 2], [2, 2, 2]], [[1, 0, 5], [3, 5, 0], [3, 5, 0]]], [[[3, 5, 5], [1, 0, 0], [1, 0, 0]], [[0, 3, 3], [5, 1, 0], [5, 1, 1]], [[4, 4, 4], [2, 2, 4], [4, 4, 4]], [[3, 3, 0], [3, 3, 1], [1, 1, 5]], [[2, 2, 2], [4, 4, 2], [2, 2, 2]], [[1, 0, 0], [3, 5, 5], [3, 5, 5]]], [[[1, 5, 5], [3, 0, 0], [3, 0, 0]], [[5, 3, 3], [1, 1, 0], [0, 1, 1]], [[4, 4, 4], [2, 2, 4], [4, 4, 4]], [[3, 3, 5], [3, 3, 5], [1, 1, 0]], [[2, 2, 2], [2, 4, 4], [2, 2, 2]], [[3, 0, 0], [1, 5, 5], [1, 5, 5]]], [[[0, 0, 3], [0, 0, 3], [5, 5, 1]], [[5, 3, 3], [1, 1, 0], [1, 1, 0]], [[4, 4, 4], [2, 2, 4], [2, 2, 2]], [[3, 3, 5], [3, 3, 5], [0, 1, 1]], [[2, 2, 2], [2, 4, 4], [4, 4, 4]], [[3, 0, 0], [1, 5, 5], [1, 5, 5]]], [[[0, 0, 3], [0, 0, 3], [0, 0, 3]], [[5, 3, 3], [1, 1, 0], [1, 1, 0]], [[4, 4, 4], [2, 2, 2], [2, 2, 2]], [[1, 1, 0], [5, 3, 3], [5, 3, 3]], [[2, 2, 2], [4, 4, 4], [4, 4, 4]], [[1, 5, 5], [1, 5, 5], [1, 5, 5]]], [[[0, 0, 3], [0, 0, 3], [0, 0, 3]], [[1, 1, 0], [1, 1, 0], [1, 1, 0]], [[2, 2, 2], [2, 2, 2], [2, 2, 2]], [[5, 3, 3], [5, 3, 3], [5, 3, 3]], [[4, 4, 4], [4, 4, 4], [4, 4, 4]], [[5, 5, 1], [5, 5, 1], [5, 5, 1]]], [[[0, 0, 0], [0, 0, 0], [0, 0, 0]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]], [[2, 2, 2], [2, 2, 2], [2, 2, 2]], [[3, 3, 3], [3, 3, 3], [3, 3, 3]], [[4, 4, 4], [4, 4, 4], [4, 4, 4]], [[5, 5, 5], [5, 5, 5], [5, 5, 5]]]]};
+
+// =================================================================
+// cube.py 포팅: 브라우저 안에서 직접 스크램블 + 솔브를 하기 위함
+// (알고리즘은 파이썬 cube.py 와 동일 - 6면 회전 + 양방향 탐색 솔버)
+// =================================================================
+function solvedCubeJS() {
+  return [0,1,2,3,4,5].map(i => [[i,i,i],[i,i,i],[i,i,i]]);
+}
+function fastCopyJS(faces) { return faces.map(f => f.map(row => row.slice())); }
+function cwJS(m) { return [0,1,2].map(r => [0,1,2].map(c => m[2-c][r])); }
+function ccwJS(m) { return [0,1,2].map(r => [0,1,2].map(c => m[c][2-r])); }
+
+function turnU(f) {
+  f[U] = cwJS(f[U]);
+  const F_=f[F], R_=f[R], B_=f[B], L_=f[L];
+  const f0=F_[0].slice(), r0=R_[0].slice(), b0=B_[0].slice(), l0=L_[0].slice();
+  F_[0]=r0; L_[0]=f0; B_[0]=l0; R_[0]=b0;
+}
+function turnD(f) {
+  f[D] = cwJS(f[D]);
+  const F_=f[F], R_=f[R], B_=f[B], L_=f[L];
+  const f2=F_[2].slice(), r2=R_[2].slice(), b2=B_[2].slice(), l2=L_[2].slice();
+  F_[2]=l2; R_[2]=f2; B_[2]=r2; L_[2]=b2;
+}
+function turnF(f) {
+  f[F] = cwJS(f[F]);
+  const U_=f[U], R_=f[R], D_=f[D], L_=f[L];
+  const u_row=U_[2].slice();
+  const r_col=[0,1,2].map(i=>R_[i][0]);
+  const d_row=D_[0].slice();
+  const l_col=[0,1,2].map(i=>L_[i][2]);
+  U_[2]=l_col.slice().reverse();
+  for (let i=0;i<3;i++) R_[i][0]=u_row[i];
+  D_[0]=r_col.slice().reverse();
+  for (let i=0;i<3;i++) L_[i][2]=d_row[i];
+}
+function turnB(f) {
+  f[B] = cwJS(f[B]);
+  const U_=f[U], R_=f[R], D_=f[D], L_=f[L];
+  const u_row=U_[0].slice();
+  const r_col=[0,1,2].map(i=>R_[i][2]);
+  const d_row=D_[2].slice();
+  const l_col=[0,1,2].map(i=>L_[i][0]);
+  U_[0]=r_col.slice().reverse();
+  for (let i=0;i<3;i++) L_[i][0]=u_row[i];
+  D_[2]=l_col.slice().reverse();
+  for (let i=0;i<3;i++) R_[i][2]=d_row[i];
+}
+function turnR(f) {
+  f[R] = cwJS(f[R]);
+  const U_=f[U], F_=f[F], D_=f[D], B_=f[B];
+  const u_col=[0,1,2].map(i=>U_[i][2]);
+  const f_col=[0,1,2].map(i=>F_[i][2]);
+  const d_col=[0,1,2].map(i=>D_[i][2]);
+  const b_col=[0,1,2].map(i=>B_[i][0]);
+  for (let i=0;i<3;i++) F_[i][2]=u_col[i];
+  for (let i=0;i<3;i++) D_[i][2]=f_col[i];
+  for (let i=0;i<3;i++) B_[i][0]=d_col[2-i];
+  for (let i=0;i<3;i++) U_[i][2]=b_col[2-i];
+}
+function turnL(f) {
+  f[L] = cwJS(f[L]);
+  const U_=f[U], F_=f[F], D_=f[D], B_=f[B];
+  const u_col=[0,1,2].map(i=>U_[i][0]);
+  const f_col=[0,1,2].map(i=>F_[i][0]);
+  const d_col=[0,1,2].map(i=>D_[i][0]);
+  const b_col=[0,1,2].map(i=>B_[i][2]);
+  for (let i=0;i<3;i++) B_[i][2]=u_col[2-i];
+  for (let i=0;i<3;i++) U_[i][0]=f_col[i];
+  for (let i=0;i<3;i++) F_[i][0]=d_col[i];
+  for (let i=0;i<3;i++) D_[i][0]=b_col[2-i];
+}
+const BASE_MOVES_JS = {U:turnU, D:turnD, R:turnR, L:turnL, F:turnF, B:turnB};
+
+function applyMoveJS(faces, move) {
+  const base = move[0], suffix = move.slice(1);
+  const n = suffix === "'" ? 3 : suffix === '2' ? 2 : 1;
+  for (let i=0;i<n;i++) BASE_MOVES_JS[base](faces);
+}
+function inverseMoveJS(move) {
+  const base = move[0], suffix = move.slice(1);
+  if (suffix === "'") return base;
+  if (suffix === '2') return move;
+  return base + "'";
+}
+function isSolvedJS(faces) {
+  const colors = [];
+  for (const face of faces) {
+    const first = face[0][0];
+    for (const row of face) for (const v of row) if (v !== first) return false;
+    colors.push(first);
+  }
+  return new Set(colors).size === 6;
+}
+function stateKeyJS(faces) { return faces.map(f => f.map(r => r.join(',')).join('|')).join('#'); }
+
+const SOLVE_MOVES_JS = ['U',"U'",'U2','D',"D'",'D2','R',"R'",'R2','L',"L'",'L2','F',"F'",'F2','B',"B'",'B2'];
+function oppositeAxisJS(m1, m2) {
+  const pairs = {U:'D', D:'U', R:'L', L:'R', F:'B', B:'F'};
+  return pairs[m1[0]] === m2[0] || m1[0] === m2[0];
+}
+
+function scrambleJS(faces, nMoves) {
+  const choices = SOLVE_MOVES_JS; // U/D/R/L/F/B 만 사용 (검증된 무브만)
+  const log = [];
+  for (let i=0;i<nMoves;i++) {
+    const m = choices[Math.floor(Math.random()*choices.length)];
+    log.push(m);
+    applyMoveJS(faces, m);
+  }
+  return log;
+}
+
+function bfsLayersJS(startFaces, maxDepth) {
+  const startKey = stateKeyJS(startFaces);
+  const layers = new Map([[startKey, []]]);
+  let frontier = [[fastCopyJS(startFaces), []]];
+  for (let d=0; d<maxDepth; d++) {
+    const nextFrontier = [];
+    for (const [state, path] of frontier) {
+      const last = path.length ? path[path.length-1] : null;
+      for (const move of SOLVE_MOVES_JS) {
+        if (last && oppositeAxisJS(last, move)) continue;
+        const child = fastCopyJS(state);
+        applyMoveJS(child, move);
+        const k = stateKeyJS(child);
+        if (!layers.has(k)) {
+          const newPath = path.concat([move]);
+          layers.set(k, newPath);
+          nextFrontier.push([child, newPath]);
+        }
+      }
+    }
+    frontier = nextFrontier;
+  }
+  return layers;
+}
+
+const FWD_CACHE_JS = new Map();
+
+function recolorToCanonicalJS(faces) {
+  const colorToSlot = {};
+  for (let i=0;i<6;i++) colorToSlot[faces[i][1][1]] = i;
+  return faces.map(face => face.map(row => row.map(v => colorToSlot[v])));
+}
+
+function solveCubeJS(faces, maxTotalMoves) {
+  if (isSolvedJS(faces)) return [];
+  const canonical = recolorToCanonicalJS(faces);
+  const half = Math.floor(maxTotalMoves / 2);
+  if (!FWD_CACHE_JS.has(half)) FWD_CACHE_JS.set(half, bfsLayersJS(solvedCubeJS(), half));
+  const fwd = FWD_CACHE_JS.get(half);
+
+  function check(k, backPath) {
+    if (fwd.has(k)) {
+      const forwardPath = fwd.get(k);
+      const commonToTarget = forwardPath.slice().reverse().map(inverseMoveJS);
+      return backPath.concat(commonToTarget);
+    }
+    return null;
+  }
+
+  const startKey = stateKeyJS(canonical);
+  const seen = new Set([startKey]);
+  let result = check(startKey, []);
+  if (result) return result;
+
+  let curStates = [[canonical, []]];
+  for (let depth=0; depth<half; depth++) {
+    const nextStates = [];
+    for (const [state, path] of curStates) {
+      const last = path.length ? path[path.length-1] : null;
+      for (const move of SOLVE_MOVES_JS) {
+        if (last && oppositeAxisJS(last, move)) continue;
+        const child = fastCopyJS(state);
+        applyMoveJS(child, move);
+        const k = stateKeyJS(child);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const newPath = path.concat([move]);
+        result = check(k, newPath);
+        if (result) return result;
+        nextStates.push([child, newPath]);
+      }
+    }
+    curStates = nextStates;
+  }
+  return null;
+}
+
+function scrambleAndSolve(nMoves) {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    const cube = solvedCubeJS();
+    const log = scrambleJS(cube, nMoves);
+    const solution = solveCubeJS(fastCopyJS(cube), 8); // half=4, 실패해도 저렴함
+    if (!solution) continue; // 이 스크램블은 포기하고 새로 섞어서 재시도
+
+    const states = [fastCopyJS(cube)];
+    const state = fastCopyJS(cube);
+    for (const m of solution) {
+      applyMoveJS(state, m);
+      states.push(fastCopyJS(state));
+    }
+    return { scramble_log: log, moves: solution, states, attempts: attempt + 1 };
+  }
+  const cube = solvedCubeJS();
+  const log = scrambleJS(cube, nMoves);
+  return { scramble_log: log, moves: [], states: [cube], attempts: 15, failed: true };
+}
+
+const D=0, F=1, R=2, B=3, L=4, U=5;
+const COLOR_MAP = {
+  [D]: 0xFFD500, // 노랑
+  [F]: 0x009E60, // 초록
+  [R]: 0xC41E3A, // 빨강
+  [B]: 0x0051BA, // 파랑
+  [L]: 0xFF5800, // 주황
+  [U]: 0xFFFFFF, // 흰색
+};
+const INNER_COLOR = 0x111318;
+
+// face-array (face,row,col) -> 3D 큐비 좌표 (파이썬 CORNER_SLOTS/EDGE_SLOTS로부터
+// 검증된 매핑을 그대로 이식)
+function pos3d(face, row, col) {
+  if (face === D) return [col-1, -1, 1-row];
+  if (face === U) return [col-1, 1, row-1];
+  if (face === F) return [col-1, 1-row, 1];
+  if (face === B) return [1-col, 1-row, -1];
+  if (face === R) return [1, 1-row, 1-col];
+  if (face === L) return [-1, 1-row, col-1];
+}
+const NORMAL = {
+  [D]: [0,-1,0], [U]: [0,1,0], [F]: [0,0,1], [B]: [0,0,-1], [R]: [1,0,0], [L]: [-1,0,0],
+};
+
+// 각 무브의 "시각적" 회전축/각도 (own-face 기준으로 결정, cosmetic 목적 -
+// 최종 색은 항상 파이썬 상태로 스냅되므로 어느 방향으로 돌아도 결과는 항상 정답)
+const MOVE_SPIN = {
+  U:  {axis:'y', deg:-90}, "U'": {axis:'y', deg: 90}, U2: {axis:'y', deg:-90, twice:true},
+  D:  {axis:'y', deg: 90}, "D'": {axis:'y', deg:-90}, D2: {axis:'y', deg: 90, twice:true},
+  R:  {axis:'x', deg:-90}, "R'": {axis:'x', deg: 90}, R2: {axis:'x', deg:-90, twice:true},
+  L:  {axis:'x', deg: 90}, "L'": {axis:'x', deg:-90}, L2: {axis:'x', deg: 90, twice:true},
+  F:  {axis:'z', deg:-90}, "F'": {axis:'z', deg: 90}, F2: {axis:'z', deg:-90, twice:true},
+  B:  {axis:'z', deg: 90}, "B'": {axis:'z', deg:-90}, B2: {axis:'z', deg: 90, twice:true},
+};
+// 레이어 판별: 이 무브가 어떤 좌표(coord) == 어떤 값(val) 인 큐비들을 돌리는지
+const MOVE_LAYER = {
+  U:'y1', "U'":'y1', U2:'y1',
+  D:'y-1', "D'":'y-1', D2:'y-1',
+  R:'x1', "R'":'x1', R2:'x1',
+  L:'x-1', "L'":'x-1', L2:'x-1',
+  F:'z1', "F'":'z1', F2:'z1',
+  B:'z-1', "B'":'z-1', B2:'z-1',
+};
+
+// ---------------------------------------------------------------
+// three.js 셋업
+// ---------------------------------------------------------------
+const wrap = document.getElementById('canvas-wrap');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1d23);
+
+const camera = new THREE.PerspectiveCamera(45, wrap.clientWidth/wrap.clientHeight, 0.1, 100);
+camera.position.set(5.5, 5, 7);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+wrap.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 4;
+controls.maxDistance = 20;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const dl = new THREE.DirectionalLight(0xffffff, 0.7);
+dl.position.set(6, 10, 8);
+scene.add(dl);
+
+window.addEventListener('resize', () => {
+  camera.aspect = wrap.clientWidth / wrap.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+});
+
+// ---------------------------------------------------------------
+// 큐브 빌드
+// ---------------------------------------------------------------
+const CUBIE_SIZE = 0.96;
+const GAP = 1.0; // 큐비 중심 간격
+
+let cubiesGroup = new THREE.Group();
+scene.add(cubiesGroup);
+
+function makeCubieMaterials(stickerColors) {
+  // three.js Box 면 순서: +x,-x,+y,-y,+z,-z
+  const order = [ [1,0,0], [-1,0,0], [0,1,0], [0,-1,0], [0,0,1], [0,0,-1] ];
+  return order.map(n => {
+    const key = n.join(',');
+    const color = stickerColors[key] !== undefined ? stickerColors[key] : INNER_COLOR;
+    return new THREE.MeshLambertMaterial({ color });
+  });
+}
+
+function buildCubeFromState(state) {
+  cubiesGroup.children.slice().forEach(c => cubiesGroup.remove(c));
+
+  // position -> {normalKey: color} 로 스티커를 모은다
+  const stickerMap = {};
+  for (let face = 0; face < 6; face++) {
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        const [x,y,z] = pos3d(face, r, c);
+        const key = `${x},${y},${z}`;
+        if (!stickerMap[key]) stickerMap[key] = {};
+        const n = NORMAL[face];
+        stickerMap[key][n.join(',')] = COLOR_MAP[state[face][r][c]];
+      }
+    }
+  }
+
+  const geo = new THREE.BoxGeometry(CUBIE_SIZE, CUBIE_SIZE, CUBIE_SIZE);
+  for (let x = -1; x <= 1; x++) {
+    for (let y = -1; y <= 1; y++) {
+      for (let z = -1; z <= 1; z++) {
+        if (x === 0 && y === 0 && z === 0) continue; // 정중앙(보이지 않는) 코어는 생략
+        const key = `${x},${y},${z}`;
+        const materials = makeCubieMaterials(stickerMap[key] || {});
+        const mesh = new THREE.Mesh(geo, materials);
+        mesh.position.set(x*GAP, y*GAP, z*GAP);
+        mesh.userData.gridPos = [x,y,z];
+        cubiesGroup.add(mesh);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------
+// 애니메이션 (레이어 회전은 순수 눈요기용 - 끝나면 항상 다음 state로 새로 빌드)
+// ---------------------------------------------------------------
+function layerFilter(layerKey) {
+  const axis = layerKey[0];
+  const val = parseInt(layerKey.slice(1));
+  return (pos) => pos[axis === 'x' ? 0 : axis === 'y' ? 1 : 2] === val;
+}
+
+function animateMove(move, nextState, duration, onDone) {
+  const spin = MOVE_SPIN[move];
+  const layerKey = MOVE_LAYER[move];
+  const filterFn = layerFilter(layerKey);
+
+  const targets = cubiesGroup.children.filter(m => filterFn(m.userData.gridPos));
+  const pivot = new THREE.Group();
+  scene.add(pivot);
+  targets.forEach(m => {
+    cubiesGroup.remove(m);
+    pivot.add(m);
+  });
+
+  const totalDeg = spin.deg * (spin.twice ? 2 : 1);
+  const totalRad = THREE.MathUtils.degToRad(totalDeg);
+  const start = performance.now();
+
+  function step(now) {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2; // ease-in-out
+    pivot.rotation[spin.axis] = totalRad * eased;
+    if (t < 1) {
+      requestAnimationFrame(step);
+    } else {
+      // 회전 끝 -> 파이썬이 계산해둔 정답 상태로 큐브 전체를 새로 빌드
+      scene.remove(pivot);
+      buildCubeFromState(nextState);
+      onDone && onDone();
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+// ---------------------------------------------------------------
+// 재생 컨트롤
+// ---------------------------------------------------------------
+let idx = 0; // 현재 states 인덱스
+let playing = false;
+
+const statusEl = document.getElementById('status');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const playBtn = document.getElementById('playBtn');
+const resetBtn = document.getElementById('resetBtn');
+
+function updateStatus() {
+  if (idx === 0) statusEl.textContent = 'Scrambled';
+  else statusEl.textContent = `Move ${idx}/${CUBE_DATA.moves.length}: ${CUBE_DATA.moves[idx-1]}`;
+  prevBtn.disabled = idx === 0;
+  nextBtn.disabled = idx >= CUBE_DATA.moves.length;
+  playBtn.disabled = idx >= CUBE_DATA.moves.length;
+}
+
+function goNext() {
+  if (idx >= CUBE_DATA.moves.length) return;
+  const move = CUBE_DATA.moves[idx];
+  const nextState = CUBE_DATA.states[idx+1];
+  [prevBtn,nextBtn,playBtn,resetBtn].forEach(b => b.disabled = true);
+  animateMove(move, nextState, 550, () => {
+    idx += 1;
+    updateStatus();
+    if (playing && idx < CUBE_DATA.moves.length) {
+      setTimeout(goNext, 250);
+    } else {
+      playing = false;
+    }
+  });
+}
+
+const scrambleBtn = document.getElementById('scrambleBtn');
+const allBtns = [scrambleBtn, prevBtn, nextBtn, playBtn, resetBtn];
+
+scrambleBtn.onclick = () => {
+  playing = false;
+  allBtns.forEach(b => b.disabled = true);
+  statusEl.textContent = '섞는 중...';
+  // setTimeout으로 한 틱 양보 -> "섞는 중..." 텍스트가 먼저 화면에 그려지게 함
+  setTimeout(() => {
+    const t0 = performance.now();
+    CUBE_DATA = scrambleAndSolve(6);
+    const dt = ((performance.now() - t0) / 1000).toFixed(2);
+    idx = 0;
+    buildCubeFromState(CUBE_DATA.states[0]);
+    updateStatus();
+    allBtns.forEach(b => b.disabled = false);
+    if (!CUBE_DATA.moves.length && !isSolvedJS(CUBE_DATA.states[0])) {
+      statusEl.textContent = `Scrambled (해를 못 찾음, ${dt}s)`;
+    }
+    updateStatus();
+    console.log(`scramble+solve took ${dt}s, moves=${CUBE_DATA.moves.length}`);
+  }, 30);
+};
+
+prevBtn.onclick = () => {
+  if (idx === 0) return;
+  idx -= 1;
+  buildCubeFromState(CUBE_DATA.states[idx]);
+  updateStatus();
+};
+nextBtn.onclick = () => { if (!playing) goNext(); };
+playBtn.onclick = () => { if (!playing) { playing = true; goNext(); } };
+resetBtn.onclick = () => {
+  playing = false;
+  idx = 0;
+  buildCubeFromState(CUBE_DATA.states[0]);
+  updateStatus();
+};
+
+buildCubeFromState(CUBE_DATA.states[0]);
+updateStatus();
+
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
